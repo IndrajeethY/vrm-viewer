@@ -21,7 +21,7 @@ A web-based VRM (Virtual Reality Model) viewer with VRMA (VRM Animation) support
 
 Open `index.html` in a web browser to see the demo. The viewer includes:
 
-- A sample VRM model (ロング女の子1.vrm)
+- A sample VRM model (sample.vrm)
 - Eleven VRMA animation examples:
   - **Angry**: Angry emotion animation
   - **Blush**: Blushing emotion animation
@@ -41,7 +41,7 @@ Open `index.html` in a web browser to see the demo. The viewer includes:
 vrm_viewer/
 ├── index.html              # Main viewer application
 ├── VRM/
-│   └── ロング女の子1.vrm     # Sample VRM model
+│   └── sample.vrm     # Sample VRM model
 ├── VRMA/
 │   ├── Angry.vrma          # Angry emotion animation
 │   ├── Blush.vrma          # Blushing emotion animation

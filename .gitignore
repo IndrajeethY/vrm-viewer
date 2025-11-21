@@ -40,3 +40,6 @@ build/
 *.backup
 *.bak
 *.orig
+
+# Documentation drafts (not for repository)
+qiita_article.md

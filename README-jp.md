@@ -41,7 +41,7 @@ Three.jsとthree-vrmライブラリを使用して構築された、VRMA（VRM�
 vrm_viewer/
 ├── index.html              # メインビューアーアプリケーション
 ├── VRM/
-│   └── ロング女の子1.vrm     # サンプルVRMモデル
+│   └── sample.vrm     # サンプルVRMモデル
 ├── VRMA/
 │   ├── Angry.vrma          # 怒り感情のアニメーション
 │   ├── Blush.vrma          # 照れる感情のアニメーション
