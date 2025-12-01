@@ -237,6 +237,15 @@
 			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 			import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm'; 
 
+			// Debug flag - set to true to enable verbose logging
+			const DEBUG_ANIMATION = false;
+			
+			// Unit conversion constants for FBX to VRM
+			// Threshold: positions above this magnitude are likely in cm
+			const CM_TO_M_THRESHOLD = 10;
+			// Conversion factor from centimeters to meters
+			const CM_TO_M_SCALE = 0.01;
+
 			// DOM elements
 			const poseCategoriesDiv = document.getElementById('poseCategories');
 			const playBtn = document.getElementById('playBtn');
@@ -529,14 +538,12 @@
 				}
 			}
 
-			// Retarget FBX animation to VRM humanoid bones
-			function retargetAnimation(sourceClip, fbx, vrm) {
-				const tracks = [];
-				const humanoidBones = vrm.humanoid.normalizedHumanBones;
+			// Build a comprehensive bone name mapping for FBX to VRM conversion
+			function buildBoneNameMap() {
+				const map = {};
 				
-				// Build a mapping from common bone names to VRM humanoid bone names
-				const boneNameMap = {
-					// Standard bone name mappings (FBX to VRM)
+				// Standard Mixamo bone name mappings (FBX to VRM humanoid bone names)
+				const mixamoToVrm = {
 					'mixamorigHips': 'hips',
 					'mixamorigSpine': 'spine',
 					'mixamorigSpine1': 'chest',
@@ -559,29 +566,6 @@
 					'mixamorigRightLeg': 'rightLowerLeg',
 					'mixamorigRightFoot': 'rightFoot',
 					'mixamorigRightToeBase': 'rightToes',
-					// Alternative naming conventions
-					'Hips': 'hips',
-					'Spine': 'spine',
-					'Spine1': 'chest',
-					'Spine2': 'upperChest',
-					'Neck': 'neck',
-					'Head': 'head',
-					'LeftShoulder': 'leftShoulder',
-					'LeftArm': 'leftUpperArm',
-					'LeftForeArm': 'leftLowerArm',
-					'LeftHand': 'leftHand',
-					'RightShoulder': 'rightShoulder',
-					'RightArm': 'rightUpperArm',
-					'RightForeArm': 'rightLowerArm',
-					'RightHand': 'rightHand',
-					'LeftUpLeg': 'leftUpperLeg',
-					'LeftLeg': 'leftLowerLeg',
-					'LeftFoot': 'leftFoot',
-					'LeftToeBase': 'leftToes',
-					'RightUpLeg': 'rightUpperLeg',
-					'RightLeg': 'rightLowerLeg',
-					'RightFoot': 'rightFoot',
-					'RightToeBase': 'rightToes',
 					// Finger bones
 					'mixamorigLeftHandThumb1': 'leftThumbProximal',
 					'mixamorigLeftHandThumb2': 'leftThumbIntermediate',
@@ -614,17 +598,212 @@
 					'mixamorigRightHandPinky2': 'rightLittleIntermediate',
 					'mixamorigRightHandPinky3': 'rightLittleDistal',
 				};
+				
+				// Alternative naming conventions (simple names without prefix)
+				const simpleToVrm = {
+					'Hips': 'hips',
+					'Spine': 'spine',
+					'Spine1': 'chest',
+					'Spine2': 'upperChest',
+					'Neck': 'neck',
+					'Head': 'head',
+					'LeftShoulder': 'leftShoulder',
+					'LeftArm': 'leftUpperArm',
+					'LeftForeArm': 'leftLowerArm',
+					'LeftHand': 'leftHand',
+					'RightShoulder': 'rightShoulder',
+					'RightArm': 'rightUpperArm',
+					'RightForeArm': 'rightLowerArm',
+					'RightHand': 'rightHand',
+					'LeftUpLeg': 'leftUpperLeg',
+					'LeftLeg': 'leftLowerLeg',
+					'LeftFoot': 'leftFoot',
+					'LeftToeBase': 'leftToes',
+					'RightUpLeg': 'rightUpperLeg',
+					'RightLeg': 'rightLowerLeg',
+					'RightFoot': 'rightFoot',
+					'RightToeBase': 'rightToes',
+				};
+				
+				// 3ds Max / Maya / Poser naming conventions
+				const altToVrm = {
+					'pelvis': 'hips',
+					'Pelvis': 'hips',
+					'hip': 'hips',
+					'Hip': 'hips',
+					'spine_01': 'spine',
+					'spine_02': 'chest',
+					'spine_03': 'upperChest',
+					'clavicle_l': 'leftShoulder',
+					'clavicle_r': 'rightShoulder',
+					'upperarm_l': 'leftUpperArm',
+					'upperarm_r': 'rightUpperArm',
+					'lowerarm_l': 'leftLowerArm',
+					'lowerarm_r': 'rightLowerArm',
+					'hand_l': 'leftHand',
+					'hand_r': 'rightHand',
+					'thigh_l': 'leftUpperLeg',
+					'thigh_r': 'rightUpperLeg',
+					'calf_l': 'leftLowerLeg',
+					'calf_r': 'rightLowerLeg',
+					'foot_l': 'leftFoot',
+					'foot_r': 'rightFoot',
+					'ball_l': 'leftToes',
+					'ball_r': 'rightToes',
+					// Daz3D naming
+					'abdomenLower': 'spine',
+					'abdomenUpper': 'chest',
+					'chestLower': 'chest',
+					'chestUpper': 'upperChest',
+					'lCollar': 'leftShoulder',
+					'rCollar': 'rightShoulder',
+					'lShldr': 'leftUpperArm',
+					'rShldr': 'rightUpperArm',
+					'lForeArm': 'leftLowerArm',
+					'rForeArm': 'rightLowerArm',
+					'lHand': 'leftHand',
+					'rHand': 'rightHand',
+					'lThigh': 'leftUpperLeg',
+					'rThigh': 'rightUpperLeg',
+					'lShin': 'leftLowerLeg',
+					'rShin': 'rightLowerLeg',
+					'lFoot': 'leftFoot',
+					'rFoot': 'rightFoot',
+				};
+				
+				// Combine all mappings
+				Object.assign(map, mixamoToVrm, simpleToVrm, altToVrm);
+				
+				return map;
+			}
+			
+			// Extract bone name from various FBX track name formats
+			function extractBoneName(trackName) {
+				// Handle different track name formats:
+				// 1. "BoneName.property" (standard)
+				// 2. "Armature|BoneName.property" (Blender export)
+				// 3. "Root/BoneName.property" (hierarchy path)
+				
+				const dotIndex = trackName.lastIndexOf('.');
+				if (dotIndex === -1) return null;
+				
+				let bonePath = trackName.substring(0, dotIndex);
+				const property = trackName.substring(dotIndex + 1);
+				
+				// Handle Blender-style naming with |
+				if (bonePath.includes('|')) {
+					bonePath = bonePath.split('|').pop();
+				}
+				
+				// Handle hierarchy paths with /
+				if (bonePath.includes('/')) {
+					bonePath = bonePath.split('/').pop();
+				}
+				
+				return { boneName: bonePath, property: property };
+			}
+			
+			// Find matching VRM bone by fuzzy matching
+			function findMatchingVrmBone(fbxBoneName, boneNameMap) {
+				// Direct match
+				if (boneNameMap[fbxBoneName]) {
+					return boneNameMap[fbxBoneName];
+				}
+				
+				// Try case-insensitive match
+				const lowerName = fbxBoneName.toLowerCase();
+				for (const [key, value] of Object.entries(boneNameMap)) {
+					if (key.toLowerCase() === lowerName) {
+						return value;
+					}
+				}
+				
+				// Fallback: Try partial matches for common naming patterns
+				// These patterns handle various 3D software naming conventions:
+				// - Mixamo: mixamorigHips, mixamorigLeftArm, etc.
+				// - Unity/Unreal: Hip, Left_Arm, lArm, etc.
+				// - Daz3D: lShldr, lThigh, abdomenLower, etc.
+				// - 3ds Max/Maya: clavicle_l, upperarm_l, thigh_l, etc.
+				const patterns = [
+					// Core body - matches "hip", "hips", "pelvis" anywhere in name
+					{ pattern: /hip|pelvis/i, vrm: 'hips' },
+					// Spine - exact match for "spine" or numbered spine (spine1, spine_01)
+					{ pattern: /^spine$/i, vrm: 'spine' },
+					{ pattern: /spine[_\s]?0?1|abdomen.*lower/i, vrm: 'spine' },
+					{ pattern: /spine[_\s]?0?2|chest.*lower|abdomen.*upper/i, vrm: 'chest' },
+					{ pattern: /spine[_\s]?0?3|chest.*upper|upper.*chest/i, vrm: 'upperChest' },
+					// Head/Neck - exact matches only to avoid false positives
+					{ pattern: /^neck$/i, vrm: 'neck' },
+					{ pattern: /^head$/i, vrm: 'head' },
+					// Left arm chain - matches "l", "left", with optional separator, then arm part
+					// Negative lookahead (?!.*fore) prevents matching "forearm" as "arm"
+					{ pattern: /l(eft)?[_\s]?(collar|shoulder|clavicle)/i, vrm: 'leftShoulder' },
+					{ pattern: /l(eft)?[_\s]?(upper[_\s]?arm|shldr|arm(?!.*fore))/i, vrm: 'leftUpperArm' },
+					{ pattern: /l(eft)?[_\s]?(fore[_\s]?arm|lower[_\s]?arm)/i, vrm: 'leftLowerArm' },
+					// Hand - negative lookahead prevents matching finger bones
+					{ pattern: /l(eft)?[_\s]?hand(?!.*thumb|index|middle|ring|pinky|little)/i, vrm: 'leftHand' },
+					// Right arm chain - same pattern as left
+					{ pattern: /r(ight)?[_\s]?(collar|shoulder|clavicle)/i, vrm: 'rightShoulder' },
+					{ pattern: /r(ight)?[_\s]?(upper[_\s]?arm|shldr|arm(?!.*fore))/i, vrm: 'rightUpperArm' },
+					{ pattern: /r(ight)?[_\s]?(fore[_\s]?arm|lower[_\s]?arm)/i, vrm: 'rightLowerArm' },
+					{ pattern: /r(ight)?[_\s]?hand(?!.*thumb|index|middle|ring|pinky|little)/i, vrm: 'rightHand' },
+					// Left leg chain - matches upleg/thigh, leg/shin/calf, foot, toes/ball
+					// Negative lookahead (?!.*up) prevents matching "upleg" as "leg"
+					{ pattern: /l(eft)?[_\s]?(up[_\s]?leg|thigh|upper[_\s]?leg)/i, vrm: 'leftUpperLeg' },
+					{ pattern: /l(eft)?[_\s]?(leg|calf|shin|lower[_\s]?leg)(?!.*up)/i, vrm: 'leftLowerLeg' },
+					{ pattern: /l(eft)?[_\s]?foot/i, vrm: 'leftFoot' },
+					{ pattern: /l(eft)?[_\s]?(toe|ball)/i, vrm: 'leftToes' },
+					// Right leg chain - same pattern as left
+					{ pattern: /r(ight)?[_\s]?(up[_\s]?leg|thigh|upper[_\s]?leg)/i, vrm: 'rightUpperLeg' },
+					{ pattern: /r(ight)?[_\s]?(leg|calf|shin|lower[_\s]?leg)(?!.*up)/i, vrm: 'rightLowerLeg' },
+					{ pattern: /r(ight)?[_\s]?foot/i, vrm: 'rightFoot' },
+					{ pattern: /r(ight)?[_\s]?(toe|ball)/i, vrm: 'rightToes' },
+				];
+				
+				for (const { pattern, vrm } of patterns) {
+					if (pattern.test(fbxBoneName)) {
+						return vrm;
+					}
+				}
+				
+				return null;
+			}
+			
+			// Retarget FBX animation to VRM humanoid bones
+			function retargetAnimation(sourceClip, fbx, vrm) {
+				const tracks = [];
+				const humanoidBones = vrm.humanoid.normalizedHumanBones;
+				const boneNameMap = buildBoneNameMap();
+				
+				// Log all tracks for debugging
+				if (DEBUG_ANIMATION) {
+					console.log('Source animation tracks:', sourceClip.tracks.map(t => t.name));
+					// Log FBX skeleton bones
+					const fbxBones = [];
+					fbx.traverse((obj) => {
+						if (obj.isBone) {
+							fbxBones.push(obj.name);
+						}
+					});
+					console.log('FBX bones found:', fbxBones);
+				}
+				
+				// Collect successfully mapped bones for logging
+				const mappedBones = [];
+				const unmappedBones = [];
 
 				for (const track of sourceClip.tracks) {
-					// Parse track name (e.g., "mixamorigHips.position" or "mixamorigHips.quaternion")
-					const parts = track.name.split('.');
-					const boneName = parts[0];
-					const propertyName = parts.slice(1).join('.');
+					const parsed = extractBoneName(track.name);
+					if (!parsed) continue;
 					
-					// Find the VRM humanoid bone name
-					const vrmBoneName = boneNameMap[boneName];
+					const { boneName, property } = parsed;
+					
+					// Find the VRM humanoid bone name using fuzzy matching
+					const vrmBoneName = findMatchingVrmBone(boneName, boneNameMap);
 					if (!vrmBoneName) {
-						// Skip bones not in our mapping
+						if (!unmappedBones.includes(boneName)) {
+							unmappedBones.push(boneName);
+						}
 						continue;
 					}
 					
@@ -634,23 +813,64 @@
 						continue;
 					}
 					
+					if (!mappedBones.includes(`${boneName} -> ${vrmBoneName}`)) {
+						mappedBones.push(`${boneName} -> ${vrmBoneName}`);
+					}
+					
 					const vrmBoneNode = humanoidBone.node;
 					
 					// Create a new track with the VRM bone's name
-					const newTrackName = vrmBoneNode.name + '.' + propertyName;
+					const newTrackName = vrmBoneNode.name + '.' + property;
 					
 					let newTrack;
-					if (track.ValueTypeName === 'quaternion' || propertyName === 'quaternion') {
+					if (track.ValueTypeName === 'quaternion' || property === 'quaternion') {
+						// Copy quaternion values directly
+						// Both FBX and VRM/glTF use Y-up right-handed coordinate systems with 
+						// quaternions representing local bone rotations. The FBX Loader already
+						// converts rotations to quaternions during parsing. If rotations appear
+						// incorrect, it may be due to different rest poses between source and
+						// target skeletons (which would require rest-pose correction, not 
+						// coordinate system conversion).
 						newTrack = new THREE.QuaternionKeyframeTrack(
 							newTrackName,
 							track.times,
 							track.values.slice()
 						);
-					} else if (track.ValueTypeName === 'vector' || propertyName === 'position' || propertyName === 'scale') {
+					} else if (track.ValueTypeName === 'vector' || property === 'position' || property === 'scale') {
+						// For position tracks, apply scaling (FBX often uses cm, VRM uses m)
+						const values = track.values.slice();
+						if (property === 'position' && values.length >= 3) {
+							// Scale positions - FBX files often use centimeters
+							// Check multiple positions to make a more robust scaling decision
+							let needsScaling = false;
+							const numPositions = Math.min(Math.floor(values.length / 3), 5); // Check up to 5 complete positions
+							for (let p = 0; p < numPositions; p++) {
+								const idx = p * 3;
+								// Verify we have a complete position (x, y, z)
+								if (idx + 2 < values.length) {
+									const magnitude = Math.sqrt(
+										values[idx] * values[idx] + 
+										values[idx + 1] * values[idx + 1] + 
+										values[idx + 2] * values[idx + 2]
+									);
+									// If any position is large, assume cm units
+									if (magnitude > CM_TO_M_THRESHOLD) {
+										needsScaling = true;
+										break;
+									}
+								}
+							}
+							// If values seem to be in cm, scale to meters
+							if (needsScaling) {
+								for (let i = 0; i < values.length; i++) {
+									values[i] *= CM_TO_M_SCALE;
+								}
+							}
+						}
 						newTrack = new THREE.VectorKeyframeTrack(
 							newTrackName,
 							track.times,
-							track.values.slice()
+							values
 						);
 					} else {
 						newTrack = track.clone();
@@ -660,11 +880,19 @@
 					tracks.push(newTrack);
 				}
 				
+				if (DEBUG_ANIMATION) {
+					console.log('Bone mappings:', mappedBones);
+					console.log('Unmapped bones:', unmappedBones);
+				}
+				
 				if (tracks.length === 0) {
-					console.warn('No tracks could be retargeted, using original animation');
+					console.warn('No tracks could be retargeted. Returning original animation clip.');
 					return sourceClip;
 				}
 				
+				if (DEBUG_ANIMATION) {
+					console.log(`Successfully retargeted ${tracks.length} tracks from ${sourceClip.tracks.length} original tracks`);
+				}
 				return new THREE.AnimationClip(sourceClip.name || 'retargeted', sourceClip.duration, tracks);
 			}
 
