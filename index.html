@@ -624,7 +624,7 @@
 					// Find the VRM humanoid bone name
 					const vrmBoneName = boneNameMap[boneName];
 					if (!vrmBoneName) {
-						// Try to find a matching bone by partial name
+						// Skip bones not in our mapping
 						continue;
 					}
 					
