@@ -302,13 +302,23 @@
 			async function loadPoseConfig() {
 				try {
 					const response = await fetch(POSES_CONFIG_URL);
+					if (!response.ok) {
+						throw new Error(`HTTP error! status: ${response.status}`);
+					}
 					poseConfig = await response.json();
 					return poseConfig;
 				} catch (error) {
 					console.error('Error loading pose config:', error);
-					statusDiv.textContent = 'Error loading pose configuration';
+					statusDiv.textContent = 'Error loading pose configuration: ' + error.message;
 					return null;
 				}
+			}
+
+			// Validate path to prevent path traversal
+			function isValidPath(path) {
+				if (!path || typeof path !== 'string') return false;
+				// Reject paths with traversal sequences or absolute paths
+				return !path.includes('..') && !path.startsWith('/') && !path.includes('://');
 			}
 
 			// UI Generation
@@ -319,6 +329,7 @@
 				
 				for (const category of poseConfig.categories) {
 					if (category.poses.length === 0) continue;
+					if (!isValidPath(category.folder)) continue;
 					
 					const categoryDiv = document.createElement('div');
 					categoryDiv.className = 'pose-category';
@@ -326,9 +337,10 @@
 					const headerDiv = document.createElement('div');
 					headerDiv.className = 'category-header';
 					
-					const previewUrl = category.preview 
-						? encodeURIComponent(poseConfig.basePath + category.folder + '/' + category.preview) 
-						: null;
+					let previewUrl = null;
+					if (category.preview && isValidPath(category.preview)) {
+						previewUrl = encodeURIComponent(poseConfig.basePath + category.folder + '/' + category.preview);
+					}
 					
 					headerDiv.innerHTML = `
 						<div class="pose-info">
@@ -367,7 +379,13 @@
 			}
 
 			function showPreview(url) {
-				thumbnailPreview.src = decodeURIComponent(url);
+				const decodedUrl = decodeURIComponent(url);
+				// Validate URL is a relative path within our VRMA folder
+				if (!decodedUrl.startsWith('./VRMA/') || decodedUrl.includes('..')) {
+					console.error('Invalid preview URL');
+					return;
+				}
+				thumbnailPreview.src = decodedUrl;
 				thumbnailPreview.classList.add('show');
 				overlay.classList.add('show');
 			}
@@ -382,6 +400,12 @@
 
 			async function loadPose(button) {
 				const url = button.dataset.url;
+				
+				// Validate URL before loading
+				if (!url || !url.startsWith('./VRMA/') || url.includes('..')) {
+					statusDiv.textContent = 'Invalid pose URL';
+					return;
+				}
 				
 				// Update active state
 				if (activePoseButton) {
