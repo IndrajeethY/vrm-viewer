@@ -225,8 +225,7 @@
 				"imports": {
 					"three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
 					"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/",
-					"@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
-					"@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3/lib/three-vrm-animation.module.min.js"
+					"@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js"
 				}
 			}
 		</script>
@@ -234,9 +233,9 @@
 		<script type="module">
 			import * as THREE from 'three';
 			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+			import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-			import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
-			import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation'; 
+			import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm'; 
 
 			// DOM elements
 			const poseCategoriesDiv = document.getElementById('poseCategories');
@@ -248,7 +247,7 @@
 			const thumbnailPreview = document.getElementById('thumbnailPreview');
 
 			// Configuration
-			const POSES_CONFIG_URL = './VRMA/poses.json';
+			const POSES_CONFIG_URL = './VRMA/motion-Moves/poses.json';
 			const VRM_MODEL_URL = './VRM/5075840185788639488.vrm';
 
 			// Pose data loaded from JSON
@@ -283,10 +282,10 @@
 			let currentVrm = undefined;
 			let currentMixer = undefined;
 			let currentAction = undefined;
-			let vrmaAnimationClip = undefined;
+			let fbxAnimationClip = undefined;
 			let activePoseButton = null;
 
-			// GLTF Loader with VRM and VRMA Plugins
+			// GLTF Loader with VRM Plugin (for VRM models)
 			const loader = new GLTFLoader();
 			loader.crossOrigin = 'anonymous';
 
@@ -294,9 +293,8 @@
 				return new VRMLoaderPlugin(parser);
 			});
 
-			loader.register((parser) => {
-				return new VRMAnimationLoaderPlugin(parser);
-			});
+			// FBX Loader for animations
+			const fbxLoader = new FBXLoader();
 
 			// Load pose configuration from JSON
 			async function loadPoseConfig() {
@@ -329,7 +327,6 @@
 				
 				for (const category of poseConfig.categories) {
 					if (category.poses.length === 0) continue;
-					if (!isValidPath(category.folder)) continue;
 					
 					const categoryDiv = document.createElement('div');
 					categoryDiv.className = 'pose-category';
@@ -339,7 +336,7 @@
 					
 					let previewUrl = null;
 					if (category.preview && isValidPath(category.preview)) {
-						previewUrl = encodeURIComponent(poseConfig.basePath + category.folder + '/' + category.preview);
+						previewUrl = encodeURIComponent(poseConfig.basePath + category.preview);
 					}
 					
 					headerDiv.innerHTML = `
@@ -354,11 +351,12 @@
 					contentDiv.className = 'category-content';
 					
 					category.poses.forEach(pose => {
+						if (!isValidPath(pose.file)) return;
 						const btn = document.createElement('button');
 						btn.className = 'pose-btn';
 						btn.textContent = pose.name;
 						btn.disabled = true;
-						btn.dataset.url = poseConfig.basePath + category.folder + '/' + pose.file;
+						btn.dataset.url = poseConfig.basePath + pose.file;
 						btn.addEventListener('click', () => loadPose(btn));
 						contentDiv.appendChild(btn);
 					});
@@ -402,7 +400,7 @@
 				const url = button.dataset.url;
 				
 				// Validate URL before loading
-				if (!url || !url.startsWith('./VRMA/') || url.includes('..')) {
+				if (!url || !url.startsWith('./VRMA/motion-Moves/') || url.includes('..')) {
 					statusDiv.textContent = 'Invalid pose URL';
 					return;
 				}
@@ -419,9 +417,9 @@
 					currentAction.stop();
 					currentAction = undefined;
 				}
-				vrmaAnimationClip = undefined;
+				fbxAnimationClip = undefined;
 				
-				await loadVRMA(url);
+				await loadFBX(url);
 			}
 
 			// File Loading Functions
@@ -476,60 +474,203 @@
 				}
 			}
 
-			async function loadVRMA(url) {
+			async function loadFBX(url) {
 				if (!currentVrm) {
 					statusDiv.textContent = 'Please load a VRM model first.';
 					return;
 				}
 
 				try {
-					statusDiv.textContent = 'Loading pose animation...';
+					statusDiv.textContent = 'Loading FBX animation...';
 					
 					return new Promise((resolve, reject) => {
-						loader.load(
+						fbxLoader.load(
 							url,
-							(gltf) => {
-								console.log('GLTF loaded (VRMA):', gltf);
+							(fbx) => {
+								console.log('FBX loaded:', fbx);
 								
-								const vrmAnimationData = gltf.userData.vrmAnimations && gltf.userData.vrmAnimations[0];
-
-								if (vrmAnimationData) {
-									const clip = createVRMAnimationClip(vrmAnimationData, currentVrm);
+								// Get the first animation clip from the FBX file
+								if (fbx.animations && fbx.animations.length > 0) {
+									const clip = fbx.animations[0];
 									
-									if (clip) {
-										vrmaAnimationClip = clip;
+									// Retarget the animation to the VRM model's bone structure
+									const retargetedClip = retargetAnimation(clip, fbx, currentVrm);
+									
+									if (retargetedClip) {
+										fbxAnimationClip = retargetedClip;
 										statusDiv.textContent = 'Pose loaded! Click Play to animate.';
-										console.log('Generated AnimationClip:', vrmaAnimationClip);
+										console.log('Generated AnimationClip:', fbxAnimationClip);
 										
 										updateButtons();
-										resolve(vrmaAnimationClip);
+										resolve(fbxAnimationClip);
 									} else {
-										throw new Error('Could not create animation clip.');
+										throw new Error('Could not retarget animation clip.');
 									}
 								} else {
-									throw new Error('No valid VRMA animation found.');
+									throw new Error('No animations found in FBX file.');
 								}
 							},
 							(progress) => {
-								const percent = (100.0 * (progress.loaded / progress.total)).toFixed(1);
-								statusDiv.textContent = `Loading pose... ${percent}%`;
+								if (progress.total > 0) {
+									const percent = (100.0 * (progress.loaded / progress.total)).toFixed(1);
+									statusDiv.textContent = `Loading pose... ${percent}%`;
+								}
 							},
 							(error) => {
-								console.error('Error loading animation:', error);
+								console.error('Error loading FBX animation:', error);
 								statusDiv.textContent = 'Error loading pose: ' + error.message;
 								reject(error);
 							}
 						);
 					});
 				} catch (error) {
-					console.error('Error in loadVRMA:', error);
-					statusDiv.textContent = 'Error loading pose animation';
+					console.error('Error in loadFBX:', error);
+					statusDiv.textContent = 'Error loading FBX animation';
 				}
+			}
+
+			// Retarget FBX animation to VRM humanoid bones
+			function retargetAnimation(sourceClip, fbx, vrm) {
+				const tracks = [];
+				const humanoidBones = vrm.humanoid.normalizedHumanBones;
+				
+				// Build a mapping from common bone names to VRM humanoid bone names
+				const boneNameMap = {
+					// Standard bone name mappings (FBX to VRM)
+					'mixamorigHips': 'hips',
+					'mixamorigSpine': 'spine',
+					'mixamorigSpine1': 'chest',
+					'mixamorigSpine2': 'upperChest',
+					'mixamorigNeck': 'neck',
+					'mixamorigHead': 'head',
+					'mixamorigLeftShoulder': 'leftShoulder',
+					'mixamorigLeftArm': 'leftUpperArm',
+					'mixamorigLeftForeArm': 'leftLowerArm',
+					'mixamorigLeftHand': 'leftHand',
+					'mixamorigRightShoulder': 'rightShoulder',
+					'mixamorigRightArm': 'rightUpperArm',
+					'mixamorigRightForeArm': 'rightLowerArm',
+					'mixamorigRightHand': 'rightHand',
+					'mixamorigLeftUpLeg': 'leftUpperLeg',
+					'mixamorigLeftLeg': 'leftLowerLeg',
+					'mixamorigLeftFoot': 'leftFoot',
+					'mixamorigLeftToeBase': 'leftToes',
+					'mixamorigRightUpLeg': 'rightUpperLeg',
+					'mixamorigRightLeg': 'rightLowerLeg',
+					'mixamorigRightFoot': 'rightFoot',
+					'mixamorigRightToeBase': 'rightToes',
+					// Alternative naming conventions
+					'Hips': 'hips',
+					'Spine': 'spine',
+					'Spine1': 'chest',
+					'Spine2': 'upperChest',
+					'Neck': 'neck',
+					'Head': 'head',
+					'LeftShoulder': 'leftShoulder',
+					'LeftArm': 'leftUpperArm',
+					'LeftForeArm': 'leftLowerArm',
+					'LeftHand': 'leftHand',
+					'RightShoulder': 'rightShoulder',
+					'RightArm': 'rightUpperArm',
+					'RightForeArm': 'rightLowerArm',
+					'RightHand': 'rightHand',
+					'LeftUpLeg': 'leftUpperLeg',
+					'LeftLeg': 'leftLowerLeg',
+					'LeftFoot': 'leftFoot',
+					'LeftToeBase': 'leftToes',
+					'RightUpLeg': 'rightUpperLeg',
+					'RightLeg': 'rightLowerLeg',
+					'RightFoot': 'rightFoot',
+					'RightToeBase': 'rightToes',
+					// Finger bones
+					'mixamorigLeftHandThumb1': 'leftThumbProximal',
+					'mixamorigLeftHandThumb2': 'leftThumbIntermediate',
+					'mixamorigLeftHandThumb3': 'leftThumbDistal',
+					'mixamorigLeftHandIndex1': 'leftIndexProximal',
+					'mixamorigLeftHandIndex2': 'leftIndexIntermediate',
+					'mixamorigLeftHandIndex3': 'leftIndexDistal',
+					'mixamorigLeftHandMiddle1': 'leftMiddleProximal',
+					'mixamorigLeftHandMiddle2': 'leftMiddleIntermediate',
+					'mixamorigLeftHandMiddle3': 'leftMiddleDistal',
+					'mixamorigLeftHandRing1': 'leftRingProximal',
+					'mixamorigLeftHandRing2': 'leftRingIntermediate',
+					'mixamorigLeftHandRing3': 'leftRingDistal',
+					'mixamorigLeftHandPinky1': 'leftLittleProximal',
+					'mixamorigLeftHandPinky2': 'leftLittleIntermediate',
+					'mixamorigLeftHandPinky3': 'leftLittleDistal',
+					'mixamorigRightHandThumb1': 'rightThumbProximal',
+					'mixamorigRightHandThumb2': 'rightThumbIntermediate',
+					'mixamorigRightHandThumb3': 'rightThumbDistal',
+					'mixamorigRightHandIndex1': 'rightIndexProximal',
+					'mixamorigRightHandIndex2': 'rightIndexIntermediate',
+					'mixamorigRightHandIndex3': 'rightIndexDistal',
+					'mixamorigRightHandMiddle1': 'rightMiddleProximal',
+					'mixamorigRightHandMiddle2': 'rightMiddleIntermediate',
+					'mixamorigRightHandMiddle3': 'rightMiddleDistal',
+					'mixamorigRightHandRing1': 'rightRingProximal',
+					'mixamorigRightHandRing2': 'rightRingIntermediate',
+					'mixamorigRightHandRing3': 'rightRingDistal',
+					'mixamorigRightHandPinky1': 'rightLittleProximal',
+					'mixamorigRightHandPinky2': 'rightLittleIntermediate',
+					'mixamorigRightHandPinky3': 'rightLittleDistal',
+				};
+
+				for (const track of sourceClip.tracks) {
+					// Parse track name (e.g., "mixamorigHips.position" or "mixamorigHips.quaternion")
+					const parts = track.name.split('.');
+					const boneName = parts[0];
+					const propertyName = parts.slice(1).join('.');
+					
+					// Find the VRM humanoid bone name
+					const vrmBoneName = boneNameMap[boneName];
+					if (!vrmBoneName) {
+						// Skip bones not in our mapping
+						continue;
+					}
+					
+					// Get the VRM bone node
+					const humanoidBone = humanoidBones[vrmBoneName];
+					if (!humanoidBone || !humanoidBone.node) {
+						continue;
+					}
+					
+					const vrmBoneNode = humanoidBone.node;
+					
+					// Create a new track with the VRM bone's name
+					const newTrackName = vrmBoneNode.name + '.' + propertyName;
+					
+					let newTrack;
+					if (track.ValueTypeName === 'quaternion' || propertyName === 'quaternion') {
+						newTrack = new THREE.QuaternionKeyframeTrack(
+							newTrackName,
+							track.times,
+							track.values.slice()
+						);
+					} else if (track.ValueTypeName === 'vector' || propertyName === 'position' || propertyName === 'scale') {
+						newTrack = new THREE.VectorKeyframeTrack(
+							newTrackName,
+							track.times,
+							track.values.slice()
+						);
+					} else {
+						newTrack = track.clone();
+						newTrack.name = newTrackName;
+					}
+					
+					tracks.push(newTrack);
+				}
+				
+				if (tracks.length === 0) {
+					console.warn('No tracks could be retargeted, using original animation');
+					return sourceClip;
+				}
+				
+				return new THREE.AnimationClip(sourceClip.name || 'retargeted', sourceClip.duration, tracks);
 			}
 
 			// Animation Control Functions
 			function playAnimation() {
-				if (currentVrm && vrmaAnimationClip && currentMixer) {
+				if (currentVrm && fbxAnimationClip && currentMixer) {
 					if (currentAction) {
 						currentAction.stop();
 					}
@@ -537,13 +678,13 @@
 					try {
 						console.log('Playing animation...');
 						
-						currentAction = currentMixer.clipAction(vrmaAnimationClip);
+						currentAction = currentMixer.clipAction(fbxAnimationClip);
 						currentAction.setLoop(THREE.LoopRepeat);
 						currentAction.clampWhenFinished = true;
 						currentAction.reset();
 						currentAction.play();
 						
-						statusDiv.textContent = `Playing (${vrmaAnimationClip.tracks.length} tracks, ${vrmaAnimationClip.duration.toFixed(2)}s)`;
+						statusDiv.textContent = `Playing (${fbxAnimationClip.tracks.length} tracks, ${fbxAnimationClip.duration.toFixed(2)}s)`;
 						console.log('Animation started successfully.');
 					} catch (error) {
 						console.error('Error playing animation:', error);
@@ -577,16 +718,16 @@
 			// UI and Event Handlers
 			function updateButtons() {
 				const hasVrm = currentVrm !== undefined;
-				const hasVrma = vrmaAnimationClip !== undefined;
+				const hasFbx = fbxAnimationClip !== undefined;
 				
 				// Enable pose buttons once VRM is loaded
 				document.querySelectorAll('.pose-btn').forEach(btn => {
 					btn.disabled = !hasVrm;
 				});
 
-				playBtn.disabled = !(hasVrm && hasVrma);
-				pauseBtn.disabled = !(hasVrm && hasVrma);
-				stopBtn.disabled = !(hasVrm && hasVrma);
+				playBtn.disabled = !(hasVrm && hasFbx);
+				pauseBtn.disabled = !(hasVrm && hasFbx);
+				stopBtn.disabled = !(hasVrm && hasFbx);
 			}
 
 			playBtn.addEventListener('click', playAnimation);
